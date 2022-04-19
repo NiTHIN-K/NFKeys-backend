@@ -485,6 +485,8 @@ var db = {}
 //       owner: '0x7Be15B3F2FAcEe083788CBDF1d9E1cFbAA6c75c6'
 //     }
 //   }
+let provider
+let erc721
 
 function serverStart(){
     console.log("Listening...")
@@ -492,6 +494,7 @@ function serverStart(){
         projectId: process.env.projID,
         projectSecret: process.env.secret
     });
+    erc721 = new ethers.Contract(address, abi, provider)
 }
 
 app.get('/viewer', (req, res) => {
@@ -508,7 +511,6 @@ app.get('/test', async (req, res) => {
     console.log(req.query)
     console.log(process.env.projID)
     res.send({result: "hi"})
-    const erc721 = new ethers.Contract(address, abi, provider)
     let currOwner = await erc721.functions.ownerOf("11") //TODO change me
     console.log(currOwner)
 })
