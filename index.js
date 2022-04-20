@@ -497,9 +497,15 @@ function serverStart(){
     erc721 = new ethers.Contract(address, abi, provider)
 }
 
-app.get('/viewer', (req, res) => {
-    console.log("hello")
-    res.send({result: "hi"})
+app.get('/viewer', async (req, res) => {
+    console.log("backend view req")
+    console.log(req.query)
+    let currOwner = await erc721.functions.ownerOf(req.query.id) //TODO change me
+    if(currOwner == req.query.address){
+        console.log(db[req.query.id].url)
+    }
+    console.log(db)
+    res.send({returl: db[req.query.id].url})
 })
 
 app.post('/mint', (req, res) => {
@@ -509,7 +515,7 @@ app.post('/mint', (req, res) => {
 
 app.get('/test', async (req, res) => {
     console.log(req.query)
-    console.log(process.env.projID)
+    // console.log(process.env.projID)
     res.send({result: "hi"})
     let currOwner = await erc721.functions.ownerOf("11") //TODO change me
     console.log(currOwner)
