@@ -1,17 +1,15 @@
-const express = require('express')
-const fs = require('fs')
-const cors = require('cors')
-const bodyParser = require('body-parser')
-const { ethers } = require("ethers");
+const express = require('express');
+const cors = require('cors');
+const { ethers } = require('ethers');
 require('dotenv').config();
 
-const app = express()
-const port = 3030
+const app = express();
+const port = Number(process.env.PORT || 3030);
 
-app.use(cors())
-app.use(bodyParser.json())
-app.listen(port, serverStart)
-//contract data...
+app.use(cors());
+app.use(express.json({ limit: '16kb' }));
+
+// Contract interface for read-only ownership checks.
 const abi =
 [
   {
@@ -476,47 +474,111 @@ const abi =
     "type": "function"
   }
 ]
-const address = "0x9cd86Aa2DB296722c50f9cC95a5FFc9A6629Ca70"
-//-----------------
-var db = {}
-// {
-//     '22': {
-//       url: 'https://i.imgur.com/OHoPloZ.jpeg',
-//       owner: '0x7Be15B3F2FAcEe083788CBDF1d9E1cFbAA6c75c6'
-//     }
-//   }
-let provider
-let erc721
+const DEFAULT_CONTRACT_ADDRESS = '0x9cd86Aa2DB296722c50f9cC95a5FFc9A6629Ca70';
+const records = new Map();
+let erc721;
 
-function serverStart(){
-    console.log("Listening...")
-    provider = new ethers.providers.InfuraProvider("rinkeby", {
-        projectId: process.env.projID,
-        projectSecret: process.env.secret
-    });
-    erc721 = new ethers.Contract(address, abi, provider)
+function initializeContract() {
+  const projectId = process.env.INFURA_PROJECT_ID;
+  if (!projectId) {
+    erc721 = undefined;
+    return false;
+  }
+
+  const provider = new ethers.providers.InfuraProvider(
+    process.env.RPC_NETWORK || 'mainnet',
+    {
+      projectId,
+      projectSecret: process.env.INFURA_PROJECT_SECRET,
+    },
+  );
+  erc721 = new ethers.Contract(
+    process.env.NFT_CONTRACT_ADDRESS || DEFAULT_CONTRACT_ADDRESS,
+    abi,
+    provider,
+  );
+  return true;
 }
 
+function normalizeAddress(value) {
+  if (typeof value !== 'string' || !ethers.utils.isAddress(value)) {
+    return null;
+  }
+  return ethers.utils.getAddress(value);
+}
+
+function validUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+function validateRecord(body) {
+  const tokenId = String(body?.tokenId || '').trim();
+  const owner = normalizeAddress(body?.owner);
+  if (!tokenId || !validUrl(body?.url) || !owner) {
+    return null;
+  }
+  return { tokenId, url: body.url, owner };
+}
+
+function requireMatchingOwner(tokenId, address) {
+  return erc721
+    ? erc721.ownerOf(tokenId).then((owner) => owner.toLowerCase() === address.toLowerCase())
+    : Promise.resolve(records.get(tokenId).owner.toLowerCase() === address.toLowerCase());
+}
+
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', ownershipCheck: erc721 ? 'contract' : 'local' });
+});
+
+app.post('/items', (req, res) => {
+  const record = validateRecord(req.body);
+  if (!record) {
+    return res.status(400).json({ error: 'tokenId, owner, and an http(s) url are required.' });
+  }
+
+  records.set(record.tokenId, { url: record.url, owner: record.owner });
+  return res.status(201).json({ tokenId: record.tokenId });
+});
+
 app.get('/viewer', async (req, res) => {
-    console.log("backend view req")
-    console.log(req.query)
-    let currOwner = await erc721.functions.ownerOf(req.query.id) //TODO change me
-    if(currOwner == req.query.address){
-        console.log(db[req.query.id].url)
+  const tokenId = String(req.query.id || '').trim();
+  const address = normalizeAddress(req.query.address);
+  const record = records.get(tokenId);
+  if (!tokenId || !address) {
+    return res.status(400).json({ error: 'A token id and valid wallet address are required.' });
+  }
+  if (!record) {
+    return res.status(404).json({ error: 'No record exists for this token id.' });
+  }
+
+  try {
+    if (!(await requireMatchingOwner(tokenId, address))) {
+      return res.status(403).json({ error: 'The supplied address does not own this token.' });
     }
-    console.log(db)
-    res.send({returl: db[req.query.id].url})
-})
+    return res.json({ url: record.url });
+  } catch {
+    return res.status(502).json({ error: 'The ownership check could not be completed.' });
+  }
+});
 
-app.post('/mint', (req, res) => {
-    db = {...db, ...req.body}
-    console.log(req.body)
-})
+function startServer() {
+  initializeContract();
+  return app.listen(port, () => {
+    console.log(`NFKeys backend listening on port ${port}.`);
+  });
+}
 
-app.get('/test', async (req, res) => {
-    console.log(req.query)
-    // console.log(process.env.projID)
-    res.send({result: "hi"})
-    let currOwner = await erc721.functions.ownerOf("11") //TODO change me
-    console.log(currOwner)
-})
+function resetRecords() {
+  records.clear();
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = { app, initializeContract, resetRecords, startServer };
